@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>o1 Launchpad Analiz</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Segoe UI, sans-serif; background:#0b0d12; color:#e6e8ee; margin:0; }
+  header { padding:20px 24px 12px; border-bottom:1px solid #1e2330; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:#8a90a3; font-size:12px; }
+  .tabs { display:flex; gap:8px; padding:14px 24px 0; }
+  .tab { padding:8px 16px; border-radius:20px; background:#141824; border:1px solid #232838; cursor:pointer; font-size:13px; color:#b7bccb; }
+  .tab.active { background:#2a5cff; color:#fff; border-color:#2a5cff; }
+  .search { margin:14px 24px 0; }
+  .search input { width:100%; max-width:420px; padding:9px 14px; border-radius:8px; border:1px solid #232838; background:#141824; color:#fff; font-size:13px; }
+  main { padding:18px 24px 40px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:#8a90a3; font-weight:500; padding:8px 10px; border-bottom:1px solid #1e2330; }
+  td { padding:9px 10px; border-bottom:1px solid #171b26; }
+  tr.rowlink { cursor:pointer; }
+  tr.rowlink:hover { background:#141824; }
+  .pos { color:#3ecf8e; } .neg { color:#f0567a; }
+  .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; background:#1e2330; color:#8a90a3; }
+  .modal-bg { position:fixed; inset:0; background:#000a; display:none; align-items:flex-start; justify-content:center; padding:40px 16px; overflow:auto; }
+  .modal-bg.open { display:flex; }
+  .modal { background:#0f1220; border:1px solid #232838; border-radius:12px; padding:22px; max-width:720px; width:100%; }
+  .modal h2 { margin-top:0; font-size:16px; word-break:break-all; }
+  .close { float:right; cursor:pointer; color:#8a90a3; }
+  .section-title { font-size:13px; color:#8a90a3; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.04em; }
+  .loading { color:#8a90a3; font-size:13px; padding:20px 0; }
+  .addr { font-family:monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>o1 Launchpad Analiz Paneli</h1>
+  <div class="sub" id="statusline">Yükleniyor...</div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="new">Yeni Coinler</div>
+  <div class="tab" data-tab="trending">Hacim Girenler</div>
+</div>
+<div class="search"><input id="searchInput" placeholder="Token ara (isim / sembol / adres)..." /></div>
+
+<main id="main"><div class="loading">Yükleniyor...</div></main>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <span class="close" id="modalClose">✕ kapat</span>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<script>
+const state = { tab: 'new', tokens: [] };
+
+document.querySelectorAll('.tab').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    state.tab = el.dataset.tab;
+    loadTokens();
+  });
+});
+
+document.getElementById('searchInput').addEventListener('input', debounce(async (e) => {
+  const q = e.target.value.trim();
+  if (!q) return loadTokens();
+  setStatus('Aranıyor: ' + q);
+  const res = await fetch('/api/tokens/search?q=' + encodeURIComponent(q));
+  const data = await res.json();
+  renderTokenTable(Array.isArray(data) ? data : []);
+}, 350));
+
+document.getElementById('modalClose').onclick = () => closeModal();
+document.getElementById('modalBg').onclick = (e) => { if (e.target.id === 'modalBg') closeModal(); };
+
+function closeModal() { document.getElementById('modalBg').classList.remove('open'); }
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+function setStatus(s) { document.getElementById('statusline').textContent = s; }
+function fmt(n) { const x = parseFloat(n); return isFinite(x) ? x.toLocaleString('tr-TR', { maximumFractionDigits: 4 }) : '-'; }
+function short(a) { return a ? a.slice(0,6) + '...' + a.slice(-4) : '-'; }
+
+async function loadTokens() {
+  setStatus('Yükleniyor...');
+  const endpoint = state.tab === 'new' ? '/api/tokens/new' : '/api/tokens/trending';
+  try {
+    const res = await fetch(endpoint);
+    const data = await res.json();
+    renderTokenTable(Array.isArray(data) ? data : []);
+    setStatus('Son güncelleme: ' + new Date().toLocaleTimeString());
+  } catch (e) {
+    setStatus('Hata: ' + e.message);
+  }
+}
+
+function renderTokenTable(tokens) {
+  state.tokens = tokens;
+  if (!tokens.length) {
+    document.getElementById('main').innerHTML = '<div class="loading">Kayıt bulunamadı (API yanıt şeması farklı olabilir - konsolu kontrol edin).</div>';
+    return;
+  }
+  const rows = tokens.map((t, i) => {
+    const addr = t.address || t.tokenAddress || '';
+    const name = t.name || t.symbol || short(addr);
+    const symbol = t.symbol || '';
+    const price = t.price ?? t.priceQuote ?? '-';
+    const vol = t.volume24h ?? t.volumeQuote ?? t.volume ?? '-';
+    const createdAt = t.createdAt || t.launchedAt || '';
+    return \`<tr class="rowlink" data-addr="\${addr}">
+      <td>\${i+1}</td>
+      <td>\${name} <span class="pill">\${symbol}</span></td>
+      <td class="addr">\${short(addr)}</td>
+      <td>\${fmt(price)}</td>
+      <td>\${fmt(vol)}</td>
+      <td>\${createdAt ? new Date(createdAt).toLocaleString('tr-TR') : '-'}</td>
+    </tr>\`;
+  }).join('');
+
+  document.getElementById('main').innerHTML = \`
+    <table>
+      <thead><tr><th>#</th><th>Token</th><th>Adres</th><th>Fiyat</th><th>Hacim</th><th>Oluşturulma</th></tr></thead>
+      <tbody>\${rows}</tbody>
+    </table>\`;
+
+  document.querySelectorAll('tr.rowlink').forEach(row => {
+    row.addEventListener('click', () => openTokenDetail(row.dataset.addr));
+  });
+}
+
+async function openTokenDetail(address) {
+  document.getElementById('modalContent').innerHTML = '<div class="loading">Detay yükleniyor...</div>';
+  document.getElementById('modalBg').classList.add('open');
+
+  try {
+    const [detailsRes, holdersRes, tradersRes] = await Promise.all([
+      fetch('/api/tokens/' + address).then(r => r.json()).catch(() => ({})),
+      fetch('/api/tokens/' + address + '/holders?limit=15').then(r => r.json()).catch(() => []),
+      fetch('/api/tokens/' + address + '/top-traders?top=10').then(r => r.json()).catch(() => ({})),
+    ]);
+
+    const holders = Array.isArray(holdersRes) ? holdersRes : (holdersRes.data || []);
+    const topTraders = tradersRes.topTraders || [];
+
+    document.getElementById('modalContent').innerHTML = \`
+      <h2>\${detailsRes.name || detailsRes.symbol || short(address)} <span class="pill">\${detailsRes.symbol || ''}</span></h2>
+      <div class="sub addr">\${address}</div>
+
+      <div class="section-title">Top Holder'lar</div>
+      \${holders.length ? \`<table><thead><tr><th>#</th><th>Cüzdan</th><th>Miktar</th><th>Pay</th></tr></thead><tbody>
+        \${holders.map((h,i) => \`<tr>
+          <td>\${i+1}</td>
+          <td class="addr">\${short(h.address || h.wallet)}</td>
+          <td>\${fmt(h.balance || h.amount)}</td>
+          <td>\${h.percentage ? fmt(h.percentage) + '%' : '-'}</td>
+        </tr>\`).join('')}
+      </tbody></table>\` : '<div class="loading">Holder verisi yok.</div>'}
+
+      <div class="section-title">En Çok Kazanan Cüzdanlar (bu token, o1 Launchpad işlemlerine göre)</div>
+      \${topTraders.length ? \`<table><thead><tr><th>#</th><th>Cüzdan</th><th>Gerçekleşen K/Z</th><th>İşlem</th><th>Kalan Bakiye</th></tr></thead><tbody>
+        \${topTraders.map((t,i) => \`<tr>
+          <td>\${i+1}</td>
+          <td class="addr">\${short(t.wallet)}</td>
+          <td class="\${t.realizedPnL >= 0 ? 'pos' : 'neg'}">\${fmt(t.realizedPnL)}</td>
+          <td>\${t.trades}</td>
+          <td>\${fmt(t.remainingTokenBalance)}</td>
+        </tr>\`).join('')}
+      </tbody></table>\` : '<div class="loading">Yeterli trade verisi yok.</div>'}
+      <div class="sub" style="margin-top:10px;">\${tradersRes.note || ''}</div>
+    \`;
+  } catch (e) {
+    document.getElementById('modalContent').innerHTML = '<div class="loading">Hata: ' + e.message + '</div>';
+  }
+}
+
+loadTokens();
+setInterval(loadTokens, 45000);
+</script>
+</body>
+</html>
